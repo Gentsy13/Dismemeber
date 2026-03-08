@@ -2,9 +2,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import '../models/meme_result.dart';
+import '../config/api_keys.dart';
 
 class MemeService {
-  static const String _apiKey = 'AIzaSyCW04nIzNEDpeGMrqIkBFiTLia5oVjrTZ8';
+  static const String _apiKey = geminiApiKey;
 
   /// Analyze an image using Google Gemini Vision API.
   Future<MemeResult> analyzeImage(Uint8List imageBytes) async {
@@ -91,18 +92,75 @@ class MemeService {
     );
   }
 
-  /// Analyze audio – still mock for now (requires ACRCloud or similar).
-  Future<MemeResult> analyzeAudio(String audioPath) async {
-    await Future.delayed(const Duration(seconds: 2));
-    return const MemeResult(
-      id: '2',
-      name: 'Audio Recognition Coming Soon',
-      description: 'Audio meme recognition requires an audio fingerprinting service like ACRCloud. This feature is under development.',
-      origin: 'N/A',
-      year: 'N/A',
-      viralContext: 'Audio recognition will support phonk tracks, viral TikTok sounds, and classic meme audio clips.',
-      variations: ['Coming soon'],
-      relatedMemes: ['Coming soon'],
+  /// Analyze audio using Google Gemini API.
+  Future<MemeResult> analyzeAudio(Uint8List audioBytes) async {
+    final base64Audio = base64Encode(audioBytes);
+
+    final url = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey',
+    );
+
+    final body = jsonEncode({
+      'contents': [
+        {
+          'parts': [
+            {
+              'text': 'Identify this audio meme or viral sound. Reply with ONLY a short JSON object: {"name":"...","description":"one sentence","origin":"one sentence","year":"YYYY","viral_context":"one sentence","variations":["v1","v2"],"related_memes":["m1","m2"]}. Keep every value under 50 words. No markdown.'
+            },
+            {
+              'inline_data': {
+                'mime_type': 'audio/webm',
+                'data': base64Audio,
+              }
+            }
+          ]
+        }
+      ],
+      'generationConfig': {
+        'temperature': 0.3,
+        'maxOutputTokens': 2048,
+        'responseMimeType': 'application/json',
+      }
+    });
+
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Gemini API error (${response.statusCode}): ${response.body}');
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final text = json['candidates'][0]['content']['parts'][0]['text'] as String;
+
+    final cleaned = text
+        .replaceAll(RegExp(r'^```json\s*', multiLine: true), '')
+        .replaceAll(RegExp(r'^```\s*', multiLine: true), '')
+        .trim();
+
+    Map<String, dynamic> memeJson;
+    try {
+      memeJson = jsonDecode(cleaned) as Map<String, dynamic>;
+    } catch (_) {
+      final nameMatch = RegExp(r'"name"\s*:\s*"([^"]*)"').firstMatch(cleaned);
+      memeJson = {
+        'name': nameMatch?.group(1) ?? 'Identified Sound',
+        'description': 'The audio was identified but full details could not be parsed.',
+      };
+    }
+
+    return MemeResult(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: memeJson['name'] as String? ?? 'Unknown Sound',
+      description: memeJson['description'] as String? ?? '',
+      origin: memeJson['origin'] as String? ?? '',
+      year: memeJson['year'] as String? ?? 'Unknown',
+      viralContext: memeJson['viral_context'] as String? ?? '',
+      variations: List<String>.from(memeJson['variations'] as List? ?? []),
+      relatedMemes: List<String>.from(memeJson['related_memes'] as List? ?? []),
       category: 'audio',
     );
   }

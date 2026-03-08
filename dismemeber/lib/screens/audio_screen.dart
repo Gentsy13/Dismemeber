@@ -1,6 +1,8 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
 import '../services/meme_service.dart';
 import 'result_screen.dart';
@@ -18,7 +20,8 @@ class _AudioScreenState extends State<AudioScreen>
   final MemeService _memeService = MemeService();
   bool _isRecording = false;
   bool _isAnalyzing = false;
-  String? _recordedPath;
+  Uint8List? _audioBytes;
+  String? _audioName;
   late AnimationController _pulseController;
 
   @override
@@ -46,41 +49,97 @@ class _AudioScreenState extends State<AudioScreen>
   }
 
   Future<void> _startRecording() async {
-    if (!await _recorder.hasPermission()) return;
+    try {
+      if (!await _recorder.hasPermission()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission denied')),
+          );
+        }
+        return;
+      }
 
-    final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/meme_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.opus),
+        path: '',
+      );
 
-    await _recorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc),
-      path: path,
-    );
-
-    setState(() {
-      _isRecording = true;
-      _recordedPath = null;
-    });
-    _pulseController.repeat(reverse: true);
+      setState(() {
+        _isRecording = true;
+        _audioBytes = null;
+        _audioName = null;
+      });
+      _pulseController.repeat(reverse: true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start recording: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _stopRecording() async {
-    final path = await _recorder.stop();
-    _pulseController.stop();
-    _pulseController.reset();
+    try {
+      final path = await _recorder.stop();
+      _pulseController.stop();
+      _pulseController.reset();
 
-    setState(() {
-      _isRecording = false;
-      _recordedPath = path;
-    });
+      if (path != null) {
+        // On web, path is a blob URL — fetch the bytes
+        final response = await http.get(Uri.parse(path));
+        setState(() {
+          _isRecording = false;
+          _audioBytes = response.bodyBytes;
+          _audioName = 'Recording';
+        });
+      } else {
+        setState(() => _isRecording = false);
+      }
+    } catch (e) {
+      _pulseController.stop();
+      _pulseController.reset();
+      setState(() => _isRecording = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to stop recording: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _pickAudioFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        withData: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        if (file.bytes != null) {
+          setState(() {
+            _audioBytes = file.bytes!;
+            _audioName = file.name;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to pick file: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _analyzeAudio() async {
-    if (_recordedPath == null) return;
+    if (_audioBytes == null) return;
 
     setState(() => _isAnalyzing = true);
 
     try {
-      final result = await _memeService.analyzeAudio(_recordedPath!);
+      final result = await _memeService.analyzeAudio(_audioBytes!);
       if (mounted) {
         Navigator.push(
           context,
@@ -115,8 +174,8 @@ class _AudioScreenState extends State<AudioScreen>
               Text(
                 _isRecording
                     ? 'Listening...'
-                    : _recordedPath != null
-                        ? 'Audio recorded!'
+                    : _audioBytes != null
+                        ? (_audioName ?? 'Audio ready!')
                         : 'Tap the mic to start',
                 style: const TextStyle(
                   color: AppColors.textPrimary,
@@ -128,9 +187,9 @@ class _AudioScreenState extends State<AudioScreen>
               Text(
                 _isRecording
                     ? 'Play the meme sound near your device'
-                    : _recordedPath != null
+                    : _audioBytes != null
                         ? 'Ready to identify the sound'
-                        : 'Record a meme sound or viral audio clip',
+                        : 'Record or upload a meme sound',
                 style: const TextStyle(
                   color: AppColors.textSecondary,
                   fontSize: 14,
@@ -204,7 +263,21 @@ class _AudioScreenState extends State<AudioScreen>
               const Spacer(),
 
               // Analyze button
-              if (_recordedPath != null && !_isRecording) ...[
+              // Upload file button
+              if (_audioBytes == null && !_isRecording) ...[                OutlinedButton.icon(
+                  onPressed: _pickAudioFile,
+                  icon: const Icon(Icons.upload_file_rounded),
+                  label: const Text('Upload Audio File'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: const BorderSide(color: AppColors.primary),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              if (_audioBytes != null && !_isRecording) ...[
                 SizedBox(
                   width: double.infinity,
                   height: 56,
@@ -229,9 +302,12 @@ class _AudioScreenState extends State<AudioScreen>
                 ),
                 const SizedBox(height: 12),
                 TextButton.icon(
-                  onPressed: () => setState(() => _recordedPath = null),
+                  onPressed: () => setState(() {
+                    _audioBytes = null;
+                    _audioName = null;
+                  }),
                   icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Record Again'),
+                  label: const Text('Try Again'),
                   style: TextButton.styleFrom(
                     foregroundColor: AppColors.textSecondary,
                   ),
