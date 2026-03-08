@@ -4,6 +4,7 @@ import '../widgets/feature_card.dart';
 import 'scan_screen.dart';
 import 'audio_screen.dart';
 import 'explore_screen.dart';
+import 'viral_memes_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -187,7 +188,7 @@ class HomeScreen extends StatelessWidget {
                     iconColor: const Color(0xFFFFC107),
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const ExploreScreen()),
+                      MaterialPageRoute(builder: (_) => const ViralMemesScreen()),
                     ),
                   ),
                   FeatureCard(
