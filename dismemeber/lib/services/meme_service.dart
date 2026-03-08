@@ -19,18 +19,7 @@ class MemeService {
         {
           'parts': [
             {
-              'text': '''Analyze this image and identify the meme. Respond ONLY with valid JSON in this exact format, no markdown, no code fences:
-{
-  "name": "Meme name",
-  "description": "What the meme is and how it's used",
-  "origin": "Where and when it originated",
-  "year": "Year it went viral (e.g. 2019)",
-  "viral_context": "How it spread and became popular on social media",
-  "variations": ["variation 1", "variation 2", "variation 3"],
-  "related_memes": ["related meme 1", "related meme 2", "related meme 3"]
-}
-
-If this is not a recognizable meme, still try your best to describe what the image shows and any potential meme-like qualities.'''
+              'text': 'Identify this meme. Reply with ONLY a short JSON object: {"name":"...","description":"one sentence","origin":"one sentence","year":"YYYY","viral_context":"one sentence","variations":["v1","v2"],"related_memes":["m1","m2"]}. Keep every value under 50 words. No markdown.'
             },
             {
               'inline_data': {
@@ -43,7 +32,8 @@ If this is not a recognizable meme, still try your best to describe what the ima
       ],
       'generationConfig': {
         'temperature': 0.3,
-        'maxOutputTokens': 1024,
+        'maxOutputTokens': 2048,
+        'responseMimeType': 'application/json',
       }
     });
 
@@ -66,7 +56,27 @@ If this is not a recognizable meme, still try your best to describe what the ima
         .replaceAll(RegExp(r'^```\s*', multiLine: true), '')
         .trim();
 
-    final memeJson = jsonDecode(cleaned) as Map<String, dynamic>;
+    Map<String, dynamic> memeJson;
+    try {
+      memeJson = jsonDecode(cleaned) as Map<String, dynamic>;
+    } catch (_) {
+      // If JSON is truncated, try to salvage what we can
+      var patched = cleaned;
+      // Close any open strings and objects
+      if (!patched.endsWith('}')) {
+        patched = '$patched"}]}';
+      }
+      try {
+        memeJson = jsonDecode(patched) as Map<String, dynamic>;
+      } catch (_) {
+        // Last resort: extract name from partial JSON
+        final nameMatch = RegExp(r'"name"\s*:\s*"([^"]*)"').firstMatch(cleaned);
+        memeJson = {
+          'name': nameMatch?.group(1) ?? 'Identified Meme',
+          'description': 'The meme was identified but the full details could not be parsed.',
+        };
+      }
+    }
 
     return MemeResult(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
